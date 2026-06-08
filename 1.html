@@ -1,0 +1,1098 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2D Raymarching & Sphere Tracing Visualizer</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;700&display=swap');
+        body {
+            font-family: 'Fira Code', monospace;
+            background-color: #020202;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        /* Class to handle crisp, nearest-neighbor scaling when pixel smoothing is turned off */
+        .crisp-pixels {
+            image-rendering: -moz-crisp-edges;
+            image-rendering: -webkit-optimize-contrast; /* Corrected WebKit value to eliminate warnings */
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        /* Custom styled minimalist sliders */
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #00ff66;
+            cursor: pointer;
+            transition: transform 0.1s ease;
+        }
+        input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #00ff66;
+            cursor: pointer;
+            transition: transform 0.1s ease;
+        }
+        input[type="range"]::-moz-range-thumb:hover {
+            transform: scale(1.2);
+        }
+    </style>
+</head>
+<body class="w-screen h-screen m-0 p-0 relative flex items-center justify-center">
+
+<!-- Screen Canvas -->
+<canvas id="rayCanvas" class="absolute top-0 left-0 w-full h-full block crisp-pixels"></canvas>
+
+<!-- Retro Minimalist HUD Overlay -->
+<div id="hud" class="absolute top-4 left-4 p-4 bg-black/95 border border-neutral-800 text-xs text-neutral-400 rounded max-w-sm transition-opacity duration-300 pointer-events-auto z-10">
+    <div class="text-neutral-200 font-bold mb-2 flex items-center justify-between">
+        <span>RAYMARCH_2D_SIMULATOR</span>
+        <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+    </div>
+    <div class="border-t border-neutral-800 my-2"></div>
+    <div class="space-y-1">
+        <p>Origin: <span id="hud-origin" class="text-green-400">0.0, 0.0</span></p>
+        <p>Target: <span id="hud-target" class="text-neutral-300">0.0, 0.0</span></p>
+        <p>Steps: <span id="hud-steps" class="text-white">0</span></p>
+        <p>Mode: <span id="hud-mode" class="text-white font-bold">SPHERE TRACING</span></p>
+        <p>Show Shapes: <span id="hud-obstacles" class="text-green-400 font-bold">YES</span></p>
+        <p>FPS: <span id="hud-fps" class="text-neutral-300">60</span></p>
+    </div>
+    <div class="border-t border-neutral-800 my-2"></div>
+
+    <!-- Interactive Controls & Sliders -->
+    <div class="space-y-3 py-1">
+        <!-- Resolution Scale Slider -->
+        <div class="space-y-1">
+            <div class="flex items-center justify-between text-[11px] text-neutral-300">
+                <span>Resolution Scale</span>
+                <span id="res-val" class="font-bold text-green-400">100%</span>
+            </div>
+            <input type="range" id="res-slider" min="10" max="200" value="100" step="5" class="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-green-500">
+        </div>
+
+        <!-- Obstacle Count Slider -->
+        <div class="space-y-1">
+            <div class="flex items-center justify-between text-[11px] text-neutral-300">
+                <span>Obstacle Count</span>
+                <span id="shapes-val" class="font-bold text-green-400">7</span>
+            </div>
+            <input type="range" id="shapes-slider" min="1" max="20" value="7" step="1" class="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-green-500">
+        </div>
+
+        <!-- LIDAR Rays Slider -->
+        <div class="space-y-1">
+            <div class="flex items-center justify-between text-[11px] text-neutral-300">
+                <span>LIDAR Ray Density</span>
+                <span id="lidar-val" class="font-bold text-yellow-500">180</span>
+            </div>
+            <input type="range" id="lidar-slider" min="20" max="1000" value="180" step="10" class="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-yellow-500">
+        </div>
+
+        <!-- LIDAR Persistence Slider -->
+        <div class="space-y-1">
+            <div class="flex items-center justify-between text-[11px] text-neutral-300">
+                <span>LIDAR Persistence</span>
+                <span id="persistence-val" class="font-bold text-green-400">2.0s</span>
+            </div>
+            <input type="range" id="persistence-slider" min="0" max="5" value="2" step="0.1" class="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-green-500">
+        </div>
+
+        <!-- LIDAR Rescan Interval Slider -->
+        <div class="space-y-1">
+            <div class="flex items-center justify-between text-[11px] text-neutral-300">
+                <span>LIDAR Rescan Timer</span>
+                <span id="rescan-val" class="font-bold text-yellow-500">Instant</span>
+            </div>
+            <input type="range" id="rescan-slider" min="0" max="1000" value="0" step="50" class="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-yellow-500">
+        </div>
+
+        <!-- Pixel Smoothing Toggle -->
+        <div class="flex items-center justify-between text-[11px] text-neutral-300">
+            <span>Pixel Smoothing</span>
+            <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="smoothing-toggle" class="sr-only peer">
+                <div class="w-9 h-5 bg-neutral-800 rounded-full peer peer-focus:ring-0 after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-neutral-500 after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500 peer-checked:after:translate-x-4 peer-checked:after:bg-white"></div>
+            </label>
+        </div>
+    </div>
+
+    <div class="border-t border-neutral-800 my-2"></div>
+    <div class="space-y-1 text-[10px] text-neutral-500">
+        <p><span class="text-neutral-300 font-medium">WASD / Arrows</span> : Move Origin (Green)</p>
+        <p><span class="text-neutral-300 font-medium">Mouse Move</span> : Aim Ray Vector</p>
+        <p><span class="text-neutral-300 font-medium">Click Screen</span> : Spawn Random Obstacle</p>
+        <p><span class="text-neutral-300 font-medium">[TAB]</span> : Toggle LIDAR Scanner Mode</p>
+        <p><span class="text-neutral-300 font-medium">[M]</span> : Toggle Blind Radar Mode (Hide Shapes)</p>
+        <p><span class="text-neutral-300 font-medium">[SPACE]</span> : Toggle Obstacle Physics</p>
+        <p><span class="text-neutral-300 font-medium">[R]</span> : Re-generate All Shapes</p>
+        <p><span class="text-neutral-300 font-medium">[H]</span> : Hide/Show HUD</p>
+    </div>
+</div>
+
+<!-- Minimal Touch Warning for Mobile -->
+<div class="absolute bottom-4 left-4 right-4 text-[10px] text-neutral-600 text-center pointer-events-none md:hidden">
+    Drag Green Dot to Move | Tap elsewhere to Aim / Spawn
+</div>
+
+<script>
+    const mainCanvas = document.getElementById('rayCanvas');
+    const screenCtx = mainCanvas.getContext('2d');
+
+    // Setup offscreen canvas for resolution independence
+    const offscreenCanvas = document.createElement('canvas');
+    const ctx = offscreenCanvas.getContext('2d'); // drawing context used by render logic
+
+    // Virtual Coordinate Space (16:9 Aspect Ratio)
+    const V_WIDTH = 1600;
+    const V_HEIGHT = 900;
+    const V_ASPECT = V_WIDTH / V_HEIGHT;
+
+    // Current window/canvas size and scaling calculations
+    let width = window.innerWidth;
+    let height = window.innerHeight;
+    let scale = 1;
+    let offsetX = 0;
+    let offsetY = 0;
+    let resScale = 1.0; // Current resolution percentage (0.10 to 2.0)
+    let pixelSmoothing = false; // Off by default for sharp retro pixels
+
+    // Virtual Positions
+    let origin = { x: V_WIDTH / 3, y: V_HEIGHT / 2 };
+    let mouse = { x: V_WIDTH / 2, y: V_HEIGHT / 2 };
+    let dir = { x: 1, y: 0 };
+
+    // Kinematics in virtual coordinates
+    let velocity = { x: 0, y: 0 };
+    let targetVelocity = { x: 0, y: 0 };
+    const MOVE_SPEED = 6.5;
+
+    let shapes = [];
+    let shapeCount = 7; // Configurable default shape amount
+    let keys = {};
+    let isLidarMode = false;
+    let radarOnlyMode = false; // Blinds the user from seeing the actual background shapes
+    let animateObstacles = false;
+    let showHud = true;
+    let isDraggingOrigin = false;
+    let lidarRays = 180; // Configured via LIDAR slider
+
+    // Dynamic Radar Points Lists
+    let lidarPoints = [];
+    let lastLidarScanTime = 0;
+    let lidarPersistenceSec = 2.0;
+    let lidarRescanInterval = 0; // ms
+
+    // FPS tracking
+    let lastTime = performance.now();
+    let frameCount = 0;
+    let fps = 60;
+
+    // Helper to project screen coordinates to virtual coordinates
+    function getVirtualCoords(clientX, clientY) {
+        return {
+            x: (clientX - offsetX) / scale,
+            y: (clientY - offsetY) / scale
+        };
+    }
+
+    // Resize handler with letterbox/pillarbox calculation
+    function resize() {
+        width = window.innerWidth;
+        height = window.innerHeight;
+        mainCanvas.width = width;
+        mainCanvas.height = height;
+
+        // Calculate scale and offsets to preserve 16:9 virtual display inside canvas bounds
+        if (width / height > V_ASPECT) {
+            scale = height / V_HEIGHT;
+            offsetX = (width - V_WIDTH * scale) / 2;
+            offsetY = 0;
+        } else {
+            scale = width / V_WIDTH;
+            offsetX = 0;
+            offsetY = (height - V_HEIGHT * scale) / 2;
+        }
+
+        // Adjust internal rendering canvas sizes based on supersampled resolution scale
+        const targetW = V_WIDTH * resScale;
+        const targetH = V_HEIGHT * resScale;
+
+        offscreenCanvas.width = targetW;
+        offscreenCanvas.height = targetH;
+
+        // Constraint origin inside virtual bounds
+        origin.x = Math.max(20, Math.min(V_WIDTH - 20, origin.x));
+        origin.y = Math.max(20, Math.min(V_HEIGHT - 20, origin.y));
+    }
+    window.addEventListener('resize', resize);
+
+    // Resolution Slider Setup
+    const resSlider = document.getElementById('res-slider');
+    const resVal = document.getElementById('res-val');
+
+    resSlider.addEventListener('input', (e) => {
+        const val = parseInt(e.target.value);
+        resScale = val / 100;
+        resVal.innerText = `${val}%`;
+        resize(); // immediately update canvas textures
+    });
+
+    // Obstacle Count Slider Setup
+    const shapesSlider = document.getElementById('shapes-slider');
+    const shapesVal = document.getElementById('shapes-val');
+
+    shapesSlider.addEventListener('input', (e) => {
+        shapeCount = parseInt(e.target.value);
+        shapesVal.innerText = shapeCount;
+        generateRandomShapes(); // instantly re-generate with new shape budget
+    });
+
+    // LIDAR Ray Slider Setup
+    const lidarSlider = document.getElementById('lidar-slider');
+    const lidarVal = document.getElementById('lidar-val');
+
+    lidarSlider.addEventListener('input', (e) => {
+        lidarRays = parseInt(e.target.value);
+        lidarVal.innerText = lidarRays;
+    });
+
+    // LIDAR Persistence Slider Setup
+    const persistenceSlider = document.getElementById('persistence-slider');
+    const persistenceVal = document.getElementById('persistence-val');
+
+    persistenceSlider.addEventListener('input', (e) => {
+        const val = parseFloat(e.target.value);
+        lidarPersistenceSec = val;
+        if (val === 0) {
+            persistenceVal.innerText = "0.0s (Off)";
+            lidarPoints = []; // Clean lingering array references immediately
+        } else {
+            persistenceVal.innerText = `${val.toFixed(1)}s`;
+        }
+    });
+
+    // LIDAR Rescan Interval Slider Setup
+    const rescanSlider = document.getElementById('rescan-slider');
+    const rescanVal = document.getElementById('rescan-val');
+
+    rescanSlider.addEventListener('input', (e) => {
+        const val = parseInt(e.target.value);
+        lidarRescanInterval = val;
+        if (val === 0) {
+            rescanVal.innerText = "Instant";
+        } else {
+            rescanVal.innerText = `${val}ms`;
+        }
+    });
+
+    // Unfocus sliders after editing to keep WASD keys clean
+    const sliders = [resSlider, shapesSlider, lidarSlider, persistenceSlider, rescanSlider];
+    sliders.forEach(slider => {
+        slider.addEventListener('change', () => slider.blur());
+        slider.addEventListener('mouseup', () => slider.blur());
+        slider.addEventListener('touchend', () => slider.blur());
+    });
+
+    // Smoothing Toggle Setup
+    const smoothingToggle = document.getElementById('smoothing-toggle');
+    smoothingToggle.checked = pixelSmoothing;
+
+    smoothingToggle.addEventListener('change', (e) => {
+        pixelSmoothing = e.target.checked;
+        if (pixelSmoothing) {
+            mainCanvas.classList.remove('crisp-pixels');
+        } else {
+            mainCanvas.classList.add('crisp-pixels');
+        }
+        smoothingToggle.blur();
+    });
+
+    // Keyboard inputs
+    window.addEventListener('keydown', (e) => {
+        keys[e.key.toLowerCase()] = true;
+
+        // Action shortcuts
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            isLidarMode = !isLidarMode;
+            if (isLidarMode) {
+                lastLidarScanTime = 0; // Force first scan instantly on mode enter
+            }
+        }
+        if (e.key.toLowerCase() === 'm') {
+            e.preventDefault();
+            radarOnlyMode = !radarOnlyMode;
+        }
+        if (e.key === ' ') {
+            e.preventDefault();
+            animateObstacles = !animateObstacles;
+        }
+        if (e.key.toLowerCase() === 'r') {
+            generateRandomShapes();
+        }
+        if (e.key.toLowerCase() === 'h') {
+            showHud = !showHud;
+            document.getElementById('hud').style.opacity = showHud ? '1' : '0';
+        }
+    });
+
+    window.addEventListener('keyup', (e) => {
+        keys[e.key.toLowerCase()] = false;
+    });
+
+    // Mouse inputs with viewport space projection
+    window.addEventListener('mousemove', (e) => {
+        const vCoords = getVirtualCoords(e.clientX, e.clientY);
+        if (isDraggingOrigin) {
+            origin.x = vCoords.x;
+            origin.y = vCoords.y;
+            origin.x = Math.max(10, Math.min(V_WIDTH - 10, origin.x));
+            origin.y = Math.max(10, Math.min(V_HEIGHT - 10, origin.y));
+        } else {
+            mouse.x = vCoords.x;
+            mouse.y = vCoords.y;
+            updateDirection();
+        }
+    });
+
+    window.addEventListener('mousedown', (e) => {
+        // Check if clicking inside HUD menu to avoid triggering logic
+        if (e.target.closest('#hud')) return;
+
+        const vCoords = getVirtualCoords(e.clientX, e.clientY);
+        const distToOrigin = Math.hypot(vCoords.x - origin.x, vCoords.y - origin.y);
+        if (distToOrigin < 30) {
+            isDraggingOrigin = true;
+        } else {
+            // Check if target click is inside the virtual coordinate canvas bounds
+            if (vCoords.x >= 0 && vCoords.x <= V_WIDTH && vCoords.y >= 0 && vCoords.y <= V_HEIGHT) {
+                spawnRandomShapeAt(vCoords.x, vCoords.y);
+            }
+        }
+    });
+
+    window.addEventListener('mouseup', () => {
+        isDraggingOrigin = false;
+    });
+
+    // Touch gestures mapped smoothly to virtual coordinates
+    window.addEventListener('touchstart', (e) => {
+        if (e.target.closest('#hud')) return;
+        if (e.touches.length > 0) {
+            const touch = e.touches[0];
+            const vCoords = getVirtualCoords(touch.clientX, touch.clientY);
+            const distToOrigin = Math.hypot(vCoords.x - origin.x, vCoords.y - origin.y);
+            if (distToOrigin < 45) {
+                isDraggingOrigin = true;
+            } else {
+                mouse.x = vCoords.x;
+                mouse.y = vCoords.y;
+                updateDirection();
+            }
+        }
+    });
+
+    window.addEventListener('touchmove', (e) => {
+        if (e.touches.length > 0) {
+            const touch = e.touches[0];
+            const vCoords = getVirtualCoords(touch.clientX, touch.clientY);
+            if (isDraggingOrigin) {
+                origin.x = vCoords.x;
+                origin.y = vCoords.y;
+                origin.x = Math.max(15, Math.min(V_WIDTH - 15, origin.x));
+                origin.y = Math.max(15, Math.min(V_HEIGHT - 15, origin.y));
+            } else {
+                mouse.x = vCoords.x;
+                mouse.y = vCoords.y;
+                updateDirection();
+            }
+        }
+    });
+
+    window.addEventListener('touchend', () => {
+        isDraggingOrigin = false;
+    });
+
+    function updateDirection() {
+        const dx = mouse.x - origin.x;
+        const dy = mouse.y - origin.y;
+        const len = Math.hypot(dx, dy);
+        if (len > 0.01) {
+            dir.x = dx / len;
+            dir.y = dy / len;
+        }
+    }
+
+    /* ----------------------------------------------------
+       SDF MATH FUNCTIONS (VIRTUAL BOUNDS)
+       ---------------------------------------------------- */
+
+    function sdCircle(p, center, r) {
+        return Math.hypot(p.x - center.x, p.y - center.y) - r;
+    }
+
+    function sdBox(p, center, size, angle) {
+        const dx = p.x - center.x;
+        const dy = p.y - center.y;
+
+        const cos = Math.cos(-angle);
+        const sin = Math.sin(-angle);
+        const rx = dx * cos - dy * sin;
+        const ry = dx * sin + dy * cos;
+
+        const qx = Math.abs(rx) - size.x / 2;
+        const qy = Math.abs(ry) - size.y / 2;
+
+        const extX = Math.max(qx, 0);
+        const extY = Math.max(qy, 0);
+        const extDist = Math.hypot(extX, extY);
+        const intDist = Math.min(Math.max(qx, qy), 0);
+
+        return extDist + intDist;
+    }
+
+    function getTriangleVertices(shape) {
+        const cos = Math.cos(shape.angle);
+        const sin = Math.sin(shape.angle);
+
+        const localRotate = (pt) => {
+            return {
+                x: shape.center.x + (pt.x * cos - pt.y * sin),
+                y: shape.center.y + (pt.x * sin + pt.y * cos)
+            };
+        };
+
+        return {
+            a: localRotate(shape.p1_local),
+            b: localRotate(shape.p2_local),
+            c: localRotate(shape.p3_local)
+        };
+    }
+
+    function sdTriangle(p, a, b, c) {
+        const e0 = { x: b.x - a.x, y: b.y - a.y };
+        const e1 = { x: c.x - b.x, y: c.y - b.y };
+        const e2 = { x: a.x - c.x, y: a.y - c.y };
+
+        const v0 = { x: p.x - a.x, y: p.y - a.y };
+        const v1 = { x: p.x - b.x, y: p.y - b.y };
+        const v2 = { x: p.x - c.x, y: p.y - c.y };
+
+        const h0 = Math.max(0, Math.min(1, (v0.x * e0.x + v0.y * e0.y) / (e0.x * e0.x + e0.y * e0.y)));
+        const h1 = Math.max(0, Math.min(1, (v1.x * e1.x + v1.y * e1.y) / (e1.x * e1.x + e1.y * e1.y)));
+        const h2 = Math.max(0, Math.min(1, (v2.x * e2.x + v2.y * e2.y) / (e2.x * e2.x + e2.y * e2.y)));
+
+        const pq0 = { x: v0.x - e0.x * h0, y: v0.y - e0.y * h0 };
+        const pq1 = { x: v1.x - e1.x * h1, y: v1.y - e1.y * h1 };
+        const pq2 = { x: v2.x - e2.x * h2, y: v2.y - e2.y * h2 };
+
+        const d0 = pq0.x * pq0.x + pq0.y * pq0.y;
+        const d1 = pq1.x * pq1.x + pq1.y * pq1.y;
+        const d2 = pq2.x * pq2.x + pq2.y * pq2.y;
+
+        const s = Math.sign(e0.x * e2.y - e0.y * e2.x);
+
+        let minD = d0;
+        let minG = s * (v0.x * e0.y - v0.y * e0.x);
+
+        const g1 = s * (v1.x * e1.y - v1.y * e1.x);
+        if (d1 < minD) minD = d1;
+        if (g1 < minG) minG = g1;
+
+        const g2 = s * (v2.x * e2.y - v2.y * e2.x);
+        if (d2 < minD) minD = d2;
+        if (g2 < minG) minG = g2;
+
+        return -Math.sqrt(minD) * Math.sign(minG);
+    }
+
+    // Constraints bounded precisely inside virtual 16:9 box
+    function sdBorder(p) {
+        const dLeft = p.x;
+        const dRight = V_WIDTH - p.x;
+        const dTop = p.y;
+        const dBottom = V_HEIGHT - p.y;
+        return Math.min(Math.min(dLeft, dRight), Math.min(dTop, dBottom));
+    }
+
+    function sdScene(p) {
+        let minDist = sdBorder(p);
+
+        for (let i = 0; i < shapes.length; i++) {
+            const shape = shapes[i];
+            let dist = 999999;
+
+            if (shape.type === 'circle') {
+                dist = sdCircle(p, shape.center, shape.r);
+            } else if (shape.type === 'box') {
+                dist = sdBox(p, shape.center, shape.size, shape.angle);
+            } else if (shape.type === 'triangle') {
+                const verts = getTriangleVertices(shape);
+                dist = sdTriangle(p, verts.a, verts.b, verts.c);
+            }
+
+            if (dist < minDist) {
+                minDist = dist;
+            }
+        }
+
+        return minDist;
+    }
+
+    /* ----------------------------------------------------
+       COLLISION RESOLUTION & SPAWNING CHECKS
+       ---------------------------------------------------- */
+
+    // Get approximate bounding radius for quick placement checks
+    function getBoundingRadius(shape) {
+        if (shape.type === 'circle') return shape.r;
+        if (shape.type === 'box') return Math.hypot(shape.size.x / 2, shape.size.y / 2);
+        if (shape.type === 'triangle') return 45; // average triangle extent size
+        return 30;
+    }
+
+    // Verify if a position overlaps with existing elements or player origin
+    function isOverlapping(cx, cy, r, existingShapes) {
+        // Check against green player origin position
+        const distToOrigin = Math.hypot(cx - origin.x, cy - origin.y);
+        if (distToOrigin < r + 75) return true; // Safe padding zone around origin
+
+        // Check against other obstacle objects
+        for (let i = 0; i < existingShapes.length; i++) {
+            const other = existingShapes[i];
+            const otherR = getBoundingRadius(other);
+            const dist = Math.hypot(cx - other.center.x, cy - other.center.y);
+            if (dist < r + otherR + 25) { // 25px visual spacing gap between shapes
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /* ----------------------------------------------------
+       SHAPE GENERATION & SIMULATION (VIRTUAL)
+       ---------------------------------------------------- */
+
+    function generateRandomShapes() {
+        shapes = [];
+        const maxAttempts = 150;
+
+        for (let i = 0; i < shapeCount; i++) {
+            const type = ['circle', 'box', 'triangle'][Math.floor(Math.random() * 3)];
+            const radiusX = 40 + Math.random() * 50;
+
+            let cx = 0, cy = 0;
+            let r = 0;
+
+            // Determine dynamic bounding extent
+            if (type === 'circle') {
+                r = radiusX / 2;
+            } else if (type === 'box') {
+                r = Math.hypot(radiusX / 2, (radiusX * 0.8) / 2);
+            } else if (type === 'triangle') {
+                r = radiusX * 0.6;
+            }
+
+            let foundSpot = false;
+            let attempts = 0;
+
+            while (attempts < maxAttempts) {
+                cx = 100 + Math.random() * (V_WIDTH - 200);
+                cy = 100 + Math.random() * (V_HEIGHT - 200);
+
+                if (!isOverlapping(cx, cy, r, shapes)) {
+                    foundSpot = true;
+                    break;
+                }
+                attempts++;
+            }
+
+            // Fallback placement (highly unlikely to overlap significantly under max budget limits)
+            if (!foundSpot) {
+                cx = 100 + Math.random() * (V_WIDTH - 200);
+                cy = 100 + Math.random() * (V_HEIGHT - 200);
+            }
+
+            const velX = (Math.random() - 0.5) * 1.5;
+            const velY = (Math.random() - 0.5) * 1.5;
+            const rotVel = (Math.random() - 0.5) * 0.015;
+
+            if (type === 'circle') {
+                shapes.push({
+                    type,
+                    center: { x: cx, y: cy },
+                    r: radiusX / 2,
+                    vel: { x: velX, y: velY },
+                    rotVel: 0
+                });
+            } else if (type === 'box') {
+                shapes.push({
+                    type,
+                    center: { x: cx, y: cy },
+                    size: { x: radiusX, y: radiusX * (0.6 + Math.random() * 0.8) },
+                    angle: Math.random() * Math.PI * 2,
+                    vel: { x: velX, y: velY },
+                    rotVel
+                });
+            } else if (type === 'triangle') {
+                const tr = radiusX * 0.6;
+                shapes.push({
+                    type,
+                    center: { x: cx, y: cy },
+                    p1_local: { x: 0, y: -tr },
+                    p2_local: { x: -tr * 0.86, y: tr * 0.5 },
+                    p3_local: { x: tr * 0.86, y: tr * 0.5 },
+                    angle: Math.random() * Math.PI * 2,
+                    vel: { x: velX, y: velY },
+                    rotVel
+                });
+            }
+        }
+        lastLidarScanTime = 0; // Force immediate sweep update
+    }
+
+    function spawnRandomShapeAt(x, y) {
+        const type = ['circle', 'box', 'triangle'][Math.floor(Math.random() * 3)];
+        const radiusX = 40 + Math.random() * 50;
+        const velX = (Math.random() - 0.5) * 1.5;
+        const velY = (Math.random() - 0.5) * 1.5;
+        const rotVel = (Math.random() - 0.5) * 0.015;
+
+        let r = 0;
+        if (type === 'circle') r = radiusX / 2;
+        else if (type === 'box') r = Math.hypot(radiusX / 2, (radiusX * 0.8) / 2);
+        else if (type === 'triangle') r = radiusX * 0.6;
+
+        // Spiral search to resolve overlap during click/tap placements
+        let cx = x;
+        let cy = y;
+        let attempts = 0;
+
+        while (attempts < 100) {
+            if (!isOverlapping(cx, cy, r, shapes)) {
+                break;
+            }
+            // Gradually search outward from cursor point
+            cx = x + (Math.random() - 0.5) * attempts * 4;
+            cy = y + (Math.random() - 0.5) * attempts * 4;
+            attempts++;
+        }
+
+        if (type === 'circle') {
+            shapes.push({
+                type,
+                center: { x: cx, y: cy },
+                r: radiusX / 2,
+                vel: { x: velX, y: velY },
+                rotVel: 0
+            });
+        } else if (type === 'box') {
+            shapes.push({
+                type,
+                center: { x: cx, y: cy },
+                size: { x: radiusX, y: radiusX * (0.6 + Math.random() * 0.8) },
+                angle: Math.random() * Math.PI * 2,
+                vel: { x: velX, y: velY },
+                rotVel
+            });
+        } else if (type === 'triangle') {
+            const tr = radiusX * 0.6;
+            shapes.push({
+                type,
+                center: { x: cx, y: cy },
+                p1_local: { x: 0, y: -tr },
+                p2_local: { x: -tr * 0.86, y: tr * 0.5 },
+                p3_local: { x: tr * 0.86, y: tr * 0.5 },
+                angle: Math.random() * Math.PI * 2,
+                vel: { x: velX, y: velY },
+                rotVel
+            });
+        }
+
+        // Hard limit to maintain performance
+        if (shapes.length > 30) {
+            shapes.shift();
+        }
+        lastLidarScanTime = 0; // Force immediate sweep update
+    }
+
+    function updateSimulation() {
+        let dx = 0, dy = 0;
+        if (keys['w'] || keys['arrowup']) dy -= 1;
+        if (keys['s'] || keys['arrowdown']) dy += 1;
+        if (keys['a'] || keys['arrowleft']) dx -= 1;
+        if (keys['d'] || keys['arrowright']) dx += 1;
+
+        if (dx !== 0 && dy !== 0) {
+            dx *= 0.7071;
+            dy *= 0.7071;
+        }
+
+        targetVelocity.x = dx * MOVE_SPEED;
+        targetVelocity.y = dy * MOVE_SPEED;
+
+        velocity.x += (targetVelocity.x - velocity.x) * 0.15;
+        velocity.y += (targetVelocity.y - velocity.y) * 0.15;
+
+        origin.x += velocity.x;
+        origin.y += velocity.y;
+
+        origin.x = Math.max(12, Math.min(V_WIDTH - 12, origin.x));
+        origin.y = Math.max(12, Math.min(V_HEIGHT - 12, origin.y));
+
+        updateDirection();
+
+        if (animateObstacles) {
+            for (let i = 0; i < shapes.length; i++) {
+                const shape = shapes[i];
+                shape.center.x += shape.vel.x;
+                shape.center.y += shape.vel.y;
+                shape.angle += shape.rotVel;
+
+                const bound = 50;
+                if (shape.center.x < bound || shape.center.x > V_WIDTH - bound) shape.vel.x *= -1;
+                if (shape.center.y < bound || shape.center.y > V_HEIGHT - bound) shape.vel.y *= -1;
+            }
+
+            // Force scanner ticks on physics frames to track obstacles in real-time
+            if (isLidarMode && lidarRescanInterval === 0) {
+                lastLidarScanTime = 0;
+            }
+        }
+    }
+
+    /* ----------------------------------------------------
+       RENDERING PIPELINE (OFFSCREEN BUFFER DRAWING)
+       ---------------------------------------------------- */
+
+    function drawScene() {
+        // Virtual background fill
+        ctx.fillStyle = '#080808';
+        ctx.fillRect(0, 0, V_WIDTH, V_HEIGHT);
+
+        // Thin crisp visual outline around virtual borders
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = '#222222';
+        ctx.strokeRect(1, 1, V_WIDTH - 2, V_HEIGHT - 2);
+
+        // Render shapes inside virtual boundaries ONLY if radar blind mode is disabled
+        if (!radarOnlyMode) {
+            ctx.fillStyle = '#1e1e1e';
+            ctx.strokeStyle = '#444444';
+            ctx.lineWidth = 2;
+
+            for (let i = 0; i < shapes.length; i++) {
+                const shape = shapes[i];
+                ctx.beginPath();
+
+                if (shape.type === 'circle') {
+                    ctx.arc(shape.center.x, shape.center.y, shape.r, 0, Math.PI * 2);
+                } else if (shape.type === 'box') {
+                    ctx.save();
+                    ctx.translate(shape.center.x, shape.center.y);
+                    ctx.rotate(shape.angle);
+                    ctx.rect(-shape.size.x / 2, -shape.size.y / 2, shape.size.x, shape.size.y);
+                    ctx.restore();
+                } else if (shape.type === 'triangle') {
+                    const verts = getTriangleVertices(shape);
+                    ctx.moveTo(verts.a.x, verts.a.y);
+                    ctx.lineTo(verts.b.x, verts.b.y);
+                    ctx.lineTo(verts.c.x, verts.c.y);
+                    ctx.closePath();
+                }
+
+                ctx.fill();
+                ctx.stroke();
+            }
+        }
+    }
+
+    function runLidarScan() {
+        const numRays = lidarRays;
+        const currentScanPoints = [];
+
+        for (let r = 0; r < numRays; r++) {
+            const angle = (r / numRays) * Math.PI * 2;
+            const rx = Math.cos(angle);
+            const ry = Math.sin(angle);
+
+            let p = { x: origin.x, y: origin.y };
+            let maxMarchSteps = 15;
+
+            for (let step = 0; step < maxMarchSteps; step++) {
+                const dist = sdScene(p);
+                if (dist < 0.8) {
+                    currentScanPoints.push({ x: p.x, y: p.y });
+                    break;
+                }
+                if (dist > 2000) break;
+                p.x += rx * dist;
+                p.y += ry * dist;
+            }
+        }
+
+        const now = performance.now();
+        const lifetimeMs = lidarPersistenceSec * 1000;
+
+        if (lifetimeMs <= 0) {
+            // Instantly overwrite with no persistence decay
+            lidarPoints = currentScanPoints.map(pt => ({
+                x: pt.x,
+                y: pt.y,
+                spawnTime: now,
+                maxLifetime: 0
+            }));
+        } else {
+            // Persistent mode: Append fresh hitpoints into active array
+            currentScanPoints.forEach(pt => {
+                lidarPoints.push({
+                    x: pt.x,
+                    y: pt.y,
+                    spawnTime: now,
+                    maxLifetime: lifetimeMs
+                });
+            });
+
+            // Performance Guardrail - prevent leak on high ray settings
+            if (lidarPoints.length > 25000) {
+                lidarPoints.splice(0, lidarPoints.length - 25000);
+            }
+        }
+    }
+
+    function renderLidarPoints() {
+        const now = performance.now();
+        const lifetimeMs = lidarPersistenceSec * 1000;
+
+        if (lifetimeMs > 0) {
+            // Math-exact culling of expired points to guarantee zero residue
+            lidarPoints = lidarPoints.filter(pt => {
+                const elapsed = now - pt.spawnTime;
+                return elapsed < pt.maxLifetime;
+            });
+        }
+
+        // Draw crisp points directly to offscreen context
+        for (let i = 0; i < lidarPoints.length; i++) {
+            const pt = lidarPoints[i];
+            let alpha = 1.0;
+
+            if (lifetimeMs > 0) {
+                const elapsed = now - pt.spawnTime;
+                alpha = Math.max(0, 1 - (elapsed / pt.maxLifetime));
+            }
+
+            ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
+    function drawRaymarching() {
+        if (isLidarMode) {
+            const now = performance.now();
+            const scanInterval = lidarRescanInterval;
+
+            let triggerScan = false;
+            if (scanInterval === 0) {
+                triggerScan = true;
+            } else if (now - lastLidarScanTime >= scanInterval) {
+                triggerScan = true;
+                lastLidarScanTime = now;
+            }
+
+            if (triggerScan) {
+                runLidarScan();
+            }
+
+            // Render persistent vector point cloud (without drawing background radial light-beams)
+            renderLidarPoints();
+
+            // FIXED: Removed the aiming laser pointer guiding sight line locked to the mouse in LIDAR mode.
+
+            document.getElementById('hud-steps').innerText = `${lidarRays} Rays`;
+            document.getElementById('hud-mode').innerText = "LIDAR SCANNER";
+            document.getElementById('hud-mode').className = "text-yellow-400 font-bold";
+
+        } else {
+            let p = { x: origin.x, y: origin.y };
+            const maxSteps = 45;
+            const epsilon = 0.6;
+            const maxDistance = Math.max(V_WIDTH, V_HEIGHT);
+            let stepsTaken = 0;
+            let isHit = false;
+
+            const segments = [];
+
+            for (let i = 0; i < maxSteps; i++) {
+                const dist = sdScene(p);
+                stepsTaken = i + 1;
+
+                segments.push({
+                    center: { x: p.x, y: p.y },
+                    radius: dist
+                });
+
+                if (dist < epsilon) {
+                    isHit = true;
+                    break;
+                }
+                if (dist > maxDistance) {
+                    break;
+                }
+
+                p.x += dir.x * dist;
+                p.y += dir.y * dist;
+            }
+
+            // Render trace safety spheres in crisp white
+            for (let i = 0; i < segments.length; i++) {
+                const s = segments[i];
+
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+                ctx.lineWidth = 1.5;
+
+                ctx.beginPath();
+                ctx.arc(s.center.x, s.center.y, Math.abs(s.radius), 0, Math.PI * 2);
+                ctx.stroke();
+
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+                ctx.beginPath();
+                ctx.arc(s.center.x, s.center.y, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(origin.x, origin.y);
+            if (segments.length > 0) {
+                const lastSegment = segments[segments.length - 1];
+                ctx.lineTo(lastSegment.center.x, lastSegment.center.y);
+            }
+            ctx.stroke();
+
+            if (isHit && segments.length > 0) {
+                const hitPoint = segments[segments.length - 1].center;
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(hitPoint.x - 5, hitPoint.y);
+                ctx.lineTo(hitPoint.x + 5, hitPoint.y);
+                ctx.moveTo(hitPoint.x, hitPoint.y - 5);
+                ctx.lineTo(hitPoint.x, hitPoint.y + 5);
+                ctx.stroke();
+            }
+
+            document.getElementById('hud-steps').innerText = `${stepsTaken} (${isHit ? 'HIT' : 'MISS'})`;
+            document.getElementById('hud-mode').innerText = "SPHERE TRACING";
+            document.getElementById('hud-mode').className = "text-white font-bold";
+        }
+    }
+
+    function drawOrigin() {
+        ctx.fillStyle = '#00ff66';
+        ctx.beginPath();
+        ctx.arc(origin.x, origin.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = 'rgba(0, 255, 102, 0.3)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(origin.x, origin.y, 11, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+
+    function updateHUD() {
+        if (!showHud) return;
+
+        const now = performance.now();
+        frameCount++;
+        if (now - lastTime >= 1000) {
+            fps = Math.round((frameCount * 1000) / (now - lastTime));
+            document.getElementById('hud-fps').innerText = fps;
+            frameCount = 0;
+            lastTime = now;
+        }
+
+        document.getElementById('hud-origin').innerText = `${Math.round(origin.x)}, ${Math.round(origin.y)}`;
+        document.getElementById('hud-target').innerText = `${Math.round(mouse.x)}, ${Math.round(mouse.y)}`;
+
+        // Toggle "Show Obstacles" label status inside HUD
+        const obstaclesLabel = document.getElementById('hud-obstacles');
+        if (radarOnlyMode) {
+            obstaclesLabel.innerText = "NO (BLIND RADAR)";
+            obstaclesLabel.className = "text-red-500 font-bold animate-pulse";
+        } else {
+            obstaclesLabel.innerText = "YES";
+            obstaclesLabel.className = "text-green-400 font-bold";
+        }
+    }
+
+    /* ----------------------------------------------------
+       MAIN APP LOOP
+       ---------------------------------------------------- */
+
+    function loop() {
+        updateSimulation();
+
+        // Clear physical canvas and outer margins (Letterbox/Pillarbox area)
+        screenCtx.fillStyle = '#020202';
+        screenCtx.fillRect(0, 0, width, height);
+
+        // Reset offscreen context scaling state
+        ctx.clearRect(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+
+        // Set dynamic smoothing parameters on context before drawing
+        ctx.imageSmoothingEnabled = pixelSmoothing;
+        ctx.mozImageSmoothingEnabled = pixelSmoothing;
+        ctx.webkitImageSmoothingEnabled = pixelSmoothing;
+        ctx.msImageSmoothingEnabled = pixelSmoothing;
+
+        ctx.save();
+        ctx.scale(resScale, resScale); // Downscaling/Upscaling factor
+
+        drawScene();
+        drawRaymarching();
+        drawOrigin();
+
+        ctx.restore();
+
+        // Update main screen rendering smoothing based on user preference
+        screenCtx.imageSmoothingEnabled = pixelSmoothing;
+        screenCtx.mozImageSmoothingEnabled = pixelSmoothing;
+        screenCtx.webkitImageSmoothingEnabled = pixelSmoothing;
+        screenCtx.msImageSmoothingEnabled = pixelSmoothing;
+
+        // Blit offscreen buffer onto standard viewport center retaining aspect ratio
+        screenCtx.drawImage(
+            offscreenCanvas,
+            0, 0, offscreenCanvas.width, offscreenCanvas.height, // source
+            offsetX, offsetY, V_WIDTH * scale, V_HEIGHT * scale  // destination
+        );
+
+        updateHUD();
+        requestAnimationFrame(loop);
+    }
+
+    // Init and Start
+    resize();
+    generateRandomShapes();
+    requestAnimationFrame(loop);
+
+</script>
+</body>
+</html>
